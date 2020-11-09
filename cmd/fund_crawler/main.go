@@ -163,29 +163,43 @@ func parseFund(resp *http.Response) (FundInfo, error) {
 	return info, err
 }
 
-func getFund(node FundNode) error {
+func getFundPage(node FundNode, pageIndex int) (int, error) {
 	if node.Code == "" {
-		return fmt.Errorf("empty fund code")
+		return 0, fmt.Errorf("empty fund code")
 	}
 	timestamp := (time.Now().Unix()-2)*1000 - rand.Int63n(1000)
-	pageIndex := 1
 	fundUrl := fmt.Sprintf("http://api.fund.eastmoney.com/f10/lsjz?callback=jQuer&fundCode=%s&pageIndex=%d&pageSize=20&startDate=&endDate=&_=%d", node.Code, pageIndex, timestamp)
 	resp, err := getHttpResponse(fundUrl)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	logger.Debug("get http fund successfully", zap.String("code", node.Code), zap.String("name", node.Name))
+	logger.Debug("get http fund successfully", zap.String("code", node.Code), zap.String("name", node.Name), zap.Int("page index", pageIndex))
 	fundInfo, err := parseFund(resp)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if fundInfo.ErrCode != 0 {
-		return fmt.Errorf("fund info error, code=[%d], msg=[%s], index=[%d], size=[%d]", fundInfo.ErrCode, fundInfo.ErrMsg, fundInfo.PageIndex, fundInfo.PageSize)
+		return 0, fmt.Errorf("fund info error, code=[%d], msg=[%s], index=[%d], size=[%d]", fundInfo.ErrCode, fundInfo.ErrMsg, fundInfo.PageIndex, fundInfo.PageSize)
 	}
 	if err = sink(node, fundInfo); err != nil {
-		return err
+		return fundInfo.TotalCount, err
 	}
 
+	return fundInfo.TotalCount, err
+}
+
+func getFund(node FundNode) error {
+	pageIndex := 1
+	for {
+		totolCount, _ := getFundPage(node, pageIndex)
+		if pageIndex*20 >= totolCount {
+			break
+		} else {
+			pageIndex++
+			time.Sleep(time.Second)
+		}
+	}
+	logger.Info("get history fund info completed", zap.String("code", node.Code), zap.String("name", node.Name), zap.Int("total page", pageIndex))
 	return nil
 }
 
@@ -251,10 +265,7 @@ func run() error {
 }
 
 func main() {
-	for {
-		logger.Info("begin run")
-		if err := run(); err != nil {
-			logger.Error("run error", zap.Error(err))
-		}
+	if err := run(); err != nil {
+		logger.Error("run error", zap.Error(err))
 	}
 }
